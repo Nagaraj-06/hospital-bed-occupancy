@@ -33,7 +33,7 @@ function App() {
         <Route path="/patient-profile" element={<PatientProfile />} />
         <Route path="/admissions" element={<Admissions />} />
 
-        {/* under maintainance*/}
+        {/* Below module's are currently under development*/}
         <Route path="/transfers" element={<PatientTransfers />} />
         <Route path="/analytics" element={<Analytics />} />
         <Route path="/ward-logs" element={<WardLogs />} />

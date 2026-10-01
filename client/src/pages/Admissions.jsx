@@ -1,28 +1,28 @@
 import React, { useState } from "react";
 import {
-  Hospital,
-  LayoutDashboard,
-  BedDouble,
-  User,
-  LogIn,
-  ArrowLeftRight,
-  ListChecks,
-  ClipboardList,
-  BarChart3,
-  FileText,
-  BellRing,
-  Settings,
   Search,
-  Bell,
   Clock,
-  ChevronDown,
-  ListFilter,
-  Clipboard,
-  AlertTriangle,
   CheckCircle2,
+  XCircle,
+  BedDouble,
+  Stethoscope,
+  Building2,
+  Calendar,
+  AlertCircle,
+  FileCheck,
+  UserCheck,
+  Loader2,
+  Clipboard,
+  ShieldCheck,
 } from "lucide-react";
+import Sidebar from "../components/Sidebar";
+import UserProfileHover from "../components/UserProfileHover";
+import {
+  useGetDoctorAdmissionRequestsQuery,
+  useUpdateAdmissionRequestStatusMutation,
+} from "../store/api/hospitalApi";
 
-// ---- Design tokens (mirrors the original Tailwind config) ----
+// ---- Design tokens ----
 const colors = {
   primary: "#00647C",
   primaryContainer: "#007F9D",
@@ -43,534 +43,456 @@ const colors = {
   outlineVariant: "#BDC8CE",
 };
 
-const navItems = [
-  { icon: LayoutDashboard, label: "Dashboard" },
-  { icon: BedDouble, label: "Wards & Beds" },
-  { icon: User, label: "Patients" },
-  { icon: LogIn, label: "Admissions", active: true },
-  { icon: ArrowLeftRight, label: "Transfers" },
-  { icon: ListChecks, label: "Waiting List" },
-  { icon: ClipboardList, label: "Ward Logs" },
-  { icon: BarChart3, label: "Analytics" },
-  { icon: FileText, label: "Reports" },
-  { icon: BellRing, label: "Alerts" },
-];
-
 const priorityStyles = {
   Urgent: { bg: "#FEF3C7", text: "#92400E", dot: "#D97706" },
   Routine: { bg: "#DCFCE7", text: "#166534", dot: "#15803D" },
   Critical: { bg: "#FEE2E2", text: "#991B1B", dot: "#B91C1C", pulse: true },
 };
 
-const pendingAdmissions = [
-  {
-    id: "PT-84920",
-    name: "Sarah Jenkins",
-    initials: "SJ",
-    dob: "04/12/1958 (65y)",
-    sex: "F",
-    priority: "Urgent",
-    tags: ["Cardiology", "Telemetry Bed"],
-    waiting: "45m",
-    physician: "Dr. Miller",
-  },
-  {
-    id: "PT-84921",
-    name: "Robert Chen",
-    initials: "RC",
-    dob: "09/02/1971 (52y)",
-    sex: "M",
-    priority: "Routine",
-    tags: ["Orthopedics", "Standard"],
-    waiting: "12m",
-    physician: "Dr. Lee",
-  },
-  {
-    id: "PT-84922",
-    name: "Elena Rodriguez",
-    initials: "ER",
-    dob: "17/07/1980 (43y)",
-    sex: "F",
-    priority: "Critical",
-    tags: ["ICU", "Intensive"],
-    waiting: "2m",
-    physician: "Dr. Vance",
-  },
-];
+const statusBadges = {
+  "PENDING": { bg: "#FEF3C7", text: "#92400E", icon: Clock },
+  "APPROVED": { bg: "#DBEAFE", text: "#1E40AF", icon: FileCheck },
+  "BED_ASSIGNED": { bg: "#DCFCE7", text: "#166534", icon: CheckCircle2 },
+  "REJECTED": { bg: "#FEE2E2", text: "#991B1B", icon: XCircle },
+  "CANCELLED": { bg: "#FEE2E2", text: "#991B1B", icon: XCircle },
+};
 
 function PriorityBadge({ priority }) {
-  const s = priorityStyles[priority];
+  const s = priorityStyles[priority] || priorityStyles.Routine;
   return (
     <span
-      className="px-2 py-1 rounded font-semibold text-[10px] flex items-center gap-1"
+      className="px-2.5 py-1 rounded-full font-semibold text-[11px] flex items-center gap-1.5"
       style={{ backgroundColor: s.bg, color: s.text }}
     >
-      <span className={`w-1.5 h-1.5 rounded-full ${s.pulse ? "animate-pulse" : ""}`} style={{ backgroundColor: s.dot }} />
+      <span className={`w-2 h-2 rounded-full ${s.pulse ? "animate-pulse" : ""}`} style={{ backgroundColor: s.dot }} />
       {priority}
     </span>
   );
 }
 
-export default function AdmissionsManagement() {
-  const [selectedId, setSelectedId] = useState("PT-84920");
-  const selected = pendingAdmissions.find((p) => p.id === selectedId);
-  const noBedAvailable = true; // mirrors the original's edge-case overlay state
+export default function DoctorAdmissionsApproval() {
+  const [searchQuery, setSearchQuery] = useState("");
+  const [filterTab, setFilterTab] = useState("Pending"); // "Pending" | "All"
+  const [selectedId, setSelectedId] = useState(null);
+
+  // Queries and Mutations
+  const { data, isLoading } = useGetDoctorAdmissionRequestsQuery();
+  const [updateStatus, { isLoading: isUpdating }] = useUpdateAdmissionRequestStatusMutation();
+
+  const admissionsList = data?.admission_requests || [];
+
+  const [showRejectModal, setShowRejectModal] = useState(false);
+  const [rejectionReasonInput, setRejectionReasonInput] = useState("");
+
+  const handleDoctorApprove = async (id) => {
+    try {
+      await updateStatus({ id, status: "APPROVED" }).unwrap();
+    } catch (err) {
+      alert(err?.data?.error || "Failed to approve request");
+    }
+  };
+
+  const handleDoctorRejectSubmit = async (e) => {
+    e.preventDefault();
+    if (!selectedId) return;
+    try {
+      await updateStatus({
+        id: selectedId,
+        status: "REJECTED",
+        rejection_reason: rejectionReasonInput || "Insufficient clinical criteria / No admission required at this time."
+      }).unwrap();
+      setShowRejectModal(false);
+      setRejectionReasonInput("");
+    } catch (err) {
+      alert(err?.data?.error || "Failed to reject request");
+    }
+  };
+
+  const filteredAdmissions = admissionsList.filter((a) => {
+    const matchesSearch =
+      a.patient_name.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      String(a.id).includes(searchQuery.toLowerCase());
+    
+    if (filterTab === "Pending") {
+      return matchesSearch && a.status === "PENDING";
+    }
+    return matchesSearch;
+  });
+
+  const pendingCount = admissionsList.filter(a => a.status === "PENDING").length;
+
+  // Auto-select first if none selected
+  const selectedIsVisible = filteredAdmissions.some((item) => item.id === selectedId);
+  const activeSelectedId = selectedIsVisible
+    ? selectedId
+    : (filteredAdmissions[0]?.id ?? null);
+  const selected = admissionsList.find((p) => p.id === activeSelectedId);
+
+  // Helper to format date
+  const formatWaiting = (dateStr) => {
+    const requested = new Date(dateStr);
+    const now = new Date();
+    const diffMins = Math.floor((now - requested) / 60000);
+    if (diffMins < 60) return `${diffMins} mins ago`;
+    const diffHours = Math.floor(diffMins / 60);
+    if (diffHours < 24) return `${diffHours} hours ago`;
+    return requested.toLocaleDateString();
+  };
 
   return (
     <div className="h-screen flex overflow-hidden font-sans antialiased" style={{ backgroundColor: colors.surface, color: colors.onSurface }}>
-      {/* Side Nav */}
-      <nav
-        className="w-64 h-screen fixed left-0 top-0 overflow-y-auto flex flex-col gap-1 p-4 z-50 border-r"
-        style={{ backgroundColor: colors.surfaceContainerLowest, borderColor: colors.outlineVariant }}
-      >
-        <div className="flex items-center gap-2 mb-6 px-2">
-          <Hospital size={30} style={{ color: colors.primary }} />
-          <div>
-            <h2 className="text-lg font-bold leading-tight" style={{ color: colors.primary }}>
-              CityCare General
-            </h2>
-            <p className="text-xs" style={{ color: colors.onSurfaceVariant }}>
-              Staff ID: 94021
-            </p>
-          </div>
-        </div>
-        <ul className="flex flex-col gap-1 flex-1">
-          {navItems.map((item) => (
-            <li key={item.label}>
-              <a
-                href="#"
-                className="flex items-center gap-3 px-4 py-2.5 rounded-lg transition-colors active:scale-95 duration-150 text-sm"
-                style={
-                  item.active
-                    ? { color: colors.primary, backgroundColor: colors.secondaryContainer, fontWeight: 600 }
-                    : { color: colors.onSurfaceVariant }
-                }
-              >
-                <item.icon size={20} />
-                <span>{item.label}</span>
-              </a>
-            </li>
-          ))}
-        </ul>
-        <div className="mt-auto border-t pt-4" style={{ borderColor: colors.outlineVariant }}>
-          <a
-            href="#"
-            className="flex items-center gap-3 px-4 py-2.5 rounded-lg transition-colors active:scale-95 duration-150 text-sm"
-            style={{ color: colors.onSurfaceVariant }}
-          >
-            <Settings size={20} />
-            <span>Settings</span>
-          </a>
-          <div className="flex items-center gap-3 mt-2 px-2 py-2">
-            <div
-              className="w-8 h-8 rounded-full border flex items-center justify-center text-xs font-semibold"
-              style={{ borderColor: colors.outlineVariant, backgroundColor: colors.surfaceContainerHigh, color: colors.onSurfaceVariant }}
-            >
-              AV
-            </div>
-            <div className="flex flex-col">
-              <span className="text-sm font-semibold">Dr. A. Vance</span>
-              <span className="text-[11px]" style={{ color: colors.onSurfaceVariant }}>
-                Admissions Coord.
-              </span>
-            </div>
-          </div>
-        </div>
-      </nav>
+      <Sidebar />
 
-      {/* Main content */}
       <div className="flex-1 flex flex-col ml-64" style={{ backgroundColor: colors.surface }}>
-        {/* Top Nav */}
         <header
-          className="sticky top-0 z-40 flex justify-between items-center px-6 py-2 h-16 border-b"
+          className="sticky top-0 z-40 flex justify-between items-center px-6 py-3 h-16 border-b shadow-sm"
           style={{ backgroundColor: colors.surfaceContainerLowest, borderColor: colors.outlineVariant }}
         >
-          <div className="flex items-center gap-6">
-            <h1 className="text-lg font-bold" style={{ color: colors.primary }}>
-              CityCare General Hospital
-            </h1>
-            <div className="relative w-64">
-              <Search size={18} className="absolute left-2 top-1/2 -translate-y-1/2" style={{ color: colors.onSurfaceVariant }} />
-              <input
-                className="w-full h-8 pl-8 pr-3 rounded-full border text-sm outline-none transition-colors"
-                style={{ backgroundColor: colors.surfaceContainerLow, borderColor: colors.outlineVariant }}
-                placeholder="Search patients, ID, wards..."
-              />
+          <div className="flex items-center gap-4">
+            <div className="p-2 rounded-lg bg-teal-50 text-teal-800">
+              <UserCheck size={22} />
+            </div>
+            <div>
+              <h1 className="text-xl font-bold" style={{ color: colors.primary }}>
+                Doctor Admissions Approval
+              </h1>
+              <p className="text-xs text-gray-500">Review patient admission requests sent by triage & reception</p>
             </div>
           </div>
-          <div className="flex items-center gap-3">
-            <button
-              className="w-8 h-8 flex items-center justify-center rounded-full relative transition-colors hover:bg-slate-100"
-              style={{ color: colors.onSurfaceVariant }}
-            >
-              <Bell size={20} />
-              <span
-                className="absolute top-1 right-1 w-2 h-2 rounded-full border-2 animate-pulse"
-                style={{ backgroundColor: colors.error, borderColor: colors.surfaceContainerLowest }}
-              />
-            </button>
-            <button
-              className="w-8 h-8 flex items-center justify-center rounded-full transition-colors hover:bg-slate-100"
-              style={{ color: colors.onSurfaceVariant }}
-            >
-              <Clock size={20} />
-            </button>
-            <div className="h-6 w-px mx-1" style={{ backgroundColor: colors.outlineVariant }} />
-            <button
-              className="flex items-center gap-1 px-2 py-1 rounded transition-colors hover:bg-slate-100"
-              style={{ color: colors.onSurfaceVariant }}
-            >
-              <span className="text-xs font-semibold">North Wing</span>
-              <ChevronDown size={16} />
-            </button>
-          </div>
+          <UserProfileHover />
         </header>
 
-        {/* Page content */}
-        <main className="flex-1 overflow-hidden p-6 flex gap-6 max-w-[1440px] mx-auto w-full">
-          {/* Left panel: pending admissions */}
-          <section
-            className="w-1/3 flex flex-col rounded-xl border shadow-sm overflow-hidden flex-shrink-0"
-            style={{ backgroundColor: colors.surfaceContainerLowest, borderColor: colors.outlineVariant }}
+        <main className="flex-1 flex overflow-hidden p-6 gap-6">
+          {/* Left panel: Master List */}
+          <div
+            className="w-1/3 flex flex-col rounded-2xl border bg-white overflow-hidden shadow-sm flex-shrink-0"
+            style={{ borderColor: colors.outlineVariant }}
           >
-            <div className="p-4 border-b flex justify-between items-center" style={{ backgroundColor: colors.surface, borderColor: colors.outlineVariant }}>
-              <div>
-                <h2 className="text-xl font-semibold">Pending Admissions</h2>
-                <p className="text-sm mt-1" style={{ color: colors.onSurfaceVariant }}>
-                  12 Patients awaiting bed assignment
-                </p>
+            <div className="p-4 border-b bg-slate-50 space-y-4">
+              <div className="relative">
+                <Search size={18} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
+                <input
+                  type="text"
+                  placeholder="Search patients..."
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  className="w-full pl-10 pr-3 py-2 text-sm rounded-lg border focus:outline-none focus:ring-2 focus:ring-teal-600"
+                />
               </div>
-              <button
-                className="p-2 rounded-full transition-colors flex items-center justify-center hover:opacity-80"
-                style={{ color: colors.primary, backgroundColor: colors.secondaryContainer }}
-              >
-                <ListFilter size={20} />
-              </button>
+              <div className="flex p-1 bg-slate-100 rounded-lg">
+                <button
+                  onClick={() => setFilterTab("Pending")}
+                  className={`flex-1 py-1.5 text-xs font-bold rounded-md transition-colors ${
+                    filterTab === "Pending" ? "bg-white shadow-sm text-teal-800" : "text-gray-500 hover:text-gray-900"
+                  }`}
+                >
+                  Pending ({pendingCount})
+                </button>
+                <button
+                  onClick={() => setFilterTab("All")}
+                  className={`flex-1 py-1.5 text-xs font-bold rounded-md transition-colors ${
+                    filterTab === "All" ? "bg-white shadow-sm text-teal-800" : "text-gray-500 hover:text-gray-900"
+                  }`}
+                >
+                  All ({admissionsList.length})
+                </button>
+              </div>
             </div>
 
-            <div className="flex-1 overflow-y-auto p-2 gap-2 flex flex-col" style={{ backgroundColor: colors.surfaceContainerLow }}>
-              {pendingAdmissions.map((p) => {
-                const isSelected = p.id === selectedId;
-                return (
-                  <div
-                    key={p.id}
-                    onClick={() => setSelectedId(p.id)}
-                    className="p-4 rounded-lg border cursor-pointer transition-transform hover:scale-[1.01]"
-                    style={{
-                      backgroundColor: colors.surfaceContainerLowest,
-                      borderColor: colors.outlineVariant,
-                      borderLeft: isSelected ? `4px solid ${colors.primary}` : `1px solid ${colors.outlineVariant}`,
-                      boxShadow: isSelected ? "0 2px 4px -1px rgba(0,0,0,0.03)" : undefined,
-                      opacity: isSelected ? 1 : 0.8,
-                    }}
-                  >
-                    <div className="flex justify-between items-start mb-2">
-                      <div>
-                        <h4 className="text-base font-semibold">{p.name}</h4>
-                        <span className="font-mono text-sm" style={{ color: colors.onSurfaceVariant }}>
-                          ID: {p.id}
-                        </span>
-                      </div>
-                      <PriorityBadge priority={p.priority} />
-                    </div>
-                    <div className="flex flex-wrap gap-2 mb-2">
-                      {p.tags.map((t) => (
-                        <span
-                          key={t}
-                          className="px-2 py-1 rounded border text-[11px]"
-                          style={{ backgroundColor: colors.surfaceContainer, borderColor: colors.outlineVariant, color: colors.onSurfaceVariant }}
-                        >
-                          {t}
-                        </span>
-                      ))}
-                    </div>
+            <div className="flex-1 overflow-y-auto p-2 space-y-2 bg-slate-50">
+              {isLoading ? (
+                <div className="flex items-center justify-center py-10 text-gray-400 gap-2">
+                  <Loader2 className="animate-spin" size={20} />
+                  <span className="text-sm">Loading requests...</span>
+                </div>
+              ) : filteredAdmissions.length === 0 ? (
+                <div className="flex flex-col items-center text-center px-5 py-10">
+                  <div className="w-14 h-14 rounded-2xl bg-teal-50 text-teal-700 flex items-center justify-center mb-3">
+                    <Clipboard size={26} strokeWidth={1.7} />
+                  </div>
+                  <p className="text-sm font-semibold text-slate-700">
+                    {searchQuery ? "No matching requests" : `No ${filterTab.toLowerCase()} requests`}
+                  </p>
+                  <p className="text-xs text-slate-500 mt-1 leading-relaxed">
+                    {searchQuery
+                      ? "Try another patient name or request number."
+                      : filterTab === "Pending"
+                        ? "New patient requests will appear here when they are submitted."
+                        : "Requests will appear here when they are submitted."}
+                  </p>
+                </div>
+              ) : (
+                filteredAdmissions.map((item) => {
+                  const isSelected = item.id === activeSelectedId;
+                  const StatusIcon = statusBadges[item.status]?.icon || Clock;
+                  const initials = item.patient_name.split(" ").map(n => n[0]).join("").toUpperCase();
+                  
+                  return (
                     <div
-                      className="flex justify-between items-center mt-1 pt-1 border-t text-[11px]"
-                      style={{ borderColor: colors.surfaceContainer, color: colors.onSurfaceVariant }}
+                      key={item.id}
+                      onClick={() => setSelectedId(item.id)}
+                      className={`p-3 rounded-xl border cursor-pointer transition-all ${
+                        isSelected ? "bg-white ring-2 ring-teal-600 shadow-sm" : "bg-white hover:border-teal-400 shadow-sm"
+                      }`}
+                      style={{ borderColor: isSelected ? colors.primary : colors.outlineVariant }}
                     >
-                      <div className="flex items-center gap-1">
-                        <Clock size={14} /> Waiting: {p.waiting}
+                      <div className="flex justify-between items-start mb-2">
+                        <div className="flex items-center gap-3">
+                          <div className="w-10 h-10 rounded-full bg-teal-50 border border-teal-100 flex items-center justify-center text-teal-800 font-bold text-sm">
+                            {initials}
+                          </div>
+                          <div>
+                            <h3 className="font-bold text-sm text-gray-900 leading-tight">{item.patient_name}</h3>
+                            <span className="text-xs text-gray-500 font-mono">REQ-{item.id}</span>
+                          </div>
+                        </div>
+                        <PriorityBadge priority={item.priority_name} />
                       </div>
-                      <div className="flex items-center gap-1">
-                        <User size={14} /> {p.physician}
-                      </div>
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          </section>
-
-          {/* Right panel: admission form & bed assignment */}
-          <section className="flex-1 flex flex-col gap-4 overflow-y-auto pr-1">
-            {/* Patient context banner */}
-            <div
-              className="rounded-xl border p-4 flex items-center justify-between shadow-sm"
-              style={{ backgroundColor: colors.surfaceContainerLowest, borderColor: colors.outlineVariant }}
-            >
-              <div className="flex items-center gap-4">
-                <div
-                  className="w-12 h-12 rounded-full flex items-center justify-center font-bold text-lg"
-                  style={{ backgroundColor: colors.secondaryContainer, color: colors.primary }}
-                >
-                  {selected.initials}
-                </div>
-                <div>
-                  <h2 className="text-2xl font-semibold">{selected.name}</h2>
-                  <div className="flex gap-4 font-mono text-xs mt-1" style={{ color: colors.onSurfaceVariant }}>
-                    <span>ID: {selected.id}</span>
-                    <span>DOB: {selected.dob}</span>
-                    <span>{selected.sex}</span>
-                  </div>
-                </div>
-              </div>
-              <div className="text-right">
-                <span className="block text-xs font-semibold" style={{ color: colors.onSurfaceVariant }}>
-                  Admission Status
-                </span>
-                <span
-                  className="inline-flex items-center gap-1 mt-1 px-2 py-1 rounded-full text-[11px] font-semibold"
-                  style={{ backgroundColor: "#FEF3C7", color: "#92400E" }}
-                >
-                  Pending Assignment
-                </span>
-              </div>
-            </div>
-
-            {/* Bento grid: form */}
-            <div className="grid grid-cols-2 gap-4">
-              {/* Clinical requirements */}
-              <div
-                className="col-span-1 rounded-xl border p-6 shadow-sm flex flex-col gap-4"
-                style={{ backgroundColor: colors.surfaceContainerLowest, borderColor: colors.outlineVariant }}
-              >
-                <div className="border-b pb-2 mb-1" style={{ borderColor: colors.surfaceContainer }}>
-                  <h3 className="text-xl font-semibold flex items-center gap-2">
-                    <Clipboard size={20} style={{ color: colors.primary }} /> Clinical Requirements
-                  </h3>
-                </div>
-                <div className="space-y-3">
-                  <div className="flex flex-col gap-1">
-                    <label className="text-xs font-semibold" style={{ color: colors.onSurfaceVariant }}>
-                      Admission Type
-                    </label>
-                    <select
-                      className="w-full h-8 px-2 rounded border text-sm focus:outline-none"
-                      style={{ borderColor: colors.outlineVariant, backgroundColor: colors.surfaceContainerLowest }}
-                    >
-                      <option>Direct Admission</option>
-                      <option>ED Transfer</option>
-                      <option>Post-Op</option>
-                    </select>
-                  </div>
-                  <div className="flex flex-col gap-1">
-                    <label className="text-xs font-semibold" style={{ color: colors.onSurfaceVariant }}>
-                      Attending Physician
-                    </label>
-                    <div className="relative">
-                      <Search size={16} className="absolute left-2 top-1/2 -translate-y-1/2" style={{ color: colors.onSurfaceVariant }} />
-                      <input
-                        type="text"
-                        defaultValue={`Dr. J. ${selected.physician.split(" ")[1] ?? "Miller"}`}
-                        className="w-full h-8 pl-8 pr-2 rounded border text-sm focus:outline-none"
-                        style={{ borderColor: colors.outlineVariant, backgroundColor: colors.surfaceContainerLowest }}
-                      />
-                    </div>
-                  </div>
-                  <div className="grid grid-cols-2 gap-2">
-                    <div className="flex flex-col gap-1">
-                      <label className="text-xs font-semibold" style={{ color: colors.onSurfaceVariant }}>
-                        Expected Stay
-                      </label>
-                      <div className="relative">
-                        <input
-                          type="number"
-                          defaultValue={3}
-                          className="w-full h-8 pl-2 pr-9 rounded border font-mono text-sm focus:outline-none"
-                          style={{ borderColor: colors.outlineVariant, backgroundColor: colors.surfaceContainerLowest }}
-                        />
-                        <span className="absolute right-2 top-1/2 -translate-y-1/2 text-sm" style={{ color: colors.onSurfaceVariant }}>
-                          Days
+                      
+                      <div className="mt-3 flex items-center justify-between text-xs border-t pt-2">
+                        <span className="font-semibold" style={{ color: statusBadges[item.status]?.text || "#666" }}>
+                          {item.status.replace("_", " ")}
+                        </span>
+                        <span className="text-gray-400 flex items-center gap-1">
+                          <Clock size={12} /> {formatWaiting(item.requested_at)}
                         </span>
                       </div>
                     </div>
-                    <div className="flex flex-col gap-1">
-                      <label className="text-xs font-semibold" style={{ color: colors.onSurfaceVariant }}>
-                        Priority
-                      </label>
-                      <select
-                        defaultValue={selected.priority}
-                        className="w-full h-8 px-2 rounded border text-sm font-semibold focus:outline-none"
-                        style={{ backgroundColor: "#FEF3C7", color: "#92400E", borderColor: "#FCD34D" }}
-                      >
-                        <option>Urgent</option>
-                        <option>Routine</option>
-                        <option>Critical</option>
-                      </select>
-                    </div>
-                  </div>
-                  <div className="flex flex-col gap-1 mt-2 pt-2 border-t" style={{ borderColor: colors.surfaceContainer }}>
-                    <label className="text-xs font-semibold" style={{ color: colors.onSurfaceVariant }}>
-                      Primary Diagnosis / Notes
-                    </label>
-                    <textarea
-                      rows={2}
-                      defaultValue="Acute exacerbation of CHF. Requires continuous telemetry monitoring."
-                      className="w-full p-2 rounded border text-sm resize-none focus:outline-none"
-                      style={{ borderColor: colors.outlineVariant, backgroundColor: colors.surfaceContainerLowest }}
-                    />
-                  </div>
-                </div>
-              </div>
+                  );
+                })
+              )}
+            </div>
+          </div>
 
-              {/* Bed assignment */}
-              <div
-                className="col-span-1 rounded-xl border p-6 shadow-sm flex flex-col gap-4 relative overflow-hidden"
-                style={{ backgroundColor: colors.surfaceContainerLowest, borderColor: colors.outlineVariant }}
-              >
-                <div className="border-b pb-2 mb-1 flex justify-between items-center" style={{ borderColor: colors.surfaceContainer }}>
-                  <h3 className="text-xl font-semibold flex items-center gap-2">
-                    <BedDouble size={20} style={{ color: colors.primary }} /> Unit Assignment
-                  </h3>
-                  <span className="font-mono text-[11px]" style={{ color: colors.onSurfaceVariant }}>
-                    Cardiology Wing (CW)
-                  </span>
-                </div>
-
-                <div className="grid grid-cols-2 gap-2 mb-2">
-                  <div className="flex flex-col gap-1">
-                    <label className="text-xs font-semibold" style={{ color: colors.onSurfaceVariant }}>
-                      Required Ward
-                    </label>
-                    <select
-                      className="w-full h-8 px-2 rounded border text-sm focus:outline-none"
-                      style={{ borderColor: colors.outlineVariant, backgroundColor: colors.surfaceContainerLowest }}
-                    >
-                      <option>Cardiology (CW-3)</option>
-                      <option>Internal Med (IM-2)</option>
-                    </select>
-                  </div>
-                  <div className="flex flex-col gap-1">
-                    <label className="text-xs font-semibold" style={{ color: colors.onSurfaceVariant }}>
-                      Required Bed Type
-                    </label>
-                    <select
-                      className="w-full h-8 px-2 rounded border text-sm focus:outline-none"
-                      style={{ borderColor: colors.outlineVariant, backgroundColor: colors.surfaceContainerLowest }}
-                    >
-                      <option>Telemetry</option>
-                      <option>Standard Medical</option>
-                      <option>ICU</option>
-                    </select>
-                  </div>
-                </div>
-
-                {/* Hidden ward map, obscured by overlay when no bed available */}
-                <div className="flex-1 rounded border relative opacity-30" style={{ backgroundColor: colors.surfaceContainer, borderColor: colors.outlineVariant }}>
-                  <div className="absolute inset-0 p-2 grid grid-cols-4 grid-rows-3 gap-1">
-                    {["301-A", "301-B"].map((bed) => (
-                      <div
-                        key={bed}
-                        className="rounded border p-1 flex flex-col items-center justify-center"
-                        style={{ backgroundColor: colors.surfaceContainerLowest, borderColor: colors.outlineVariant }}
-                      >
-                        <User size={16} style={{ color: colors.error }} />
-                        <span className="font-mono text-[10px]" style={{ color: colors.onSurfaceVariant }}>
-                          {bed}
-                        </span>
-                      </div>
-                    ))}
-                    <div className="col-span-2 row-span-3 rounded flex items-center justify-center" style={{ backgroundColor: "rgba(223,227,230,0.2)" }}>
-                      <span className="text-[10px] tracking-widest uppercase" style={{ color: "rgba(62,72,77,0.5)", writingMode: "vertical-rl", transform: "rotate(180deg)" }}>
-                        Corridor A
+          {/* Right panel: Detail View */}
+          <div className="flex-1 bg-white rounded-2xl border shadow-sm flex flex-col overflow-hidden" style={{ borderColor: colors.outlineVariant }}>
+            {selected ? (
+              <div className="flex flex-col h-full overflow-y-auto">
+                <div className="p-6 border-b bg-slate-50 flex justify-between items-start">
+                  <div>
+                    <h2 className="text-2xl font-bold text-gray-900">{selected.patient_name}</h2>
+                    <div className="flex items-center gap-4 mt-2 text-sm text-gray-600">
+                      <span className="font-medium bg-white px-2 py-0.5 rounded border border-gray-200 shadow-sm">
+                        Age: {selected.age}y
+                      </span>
+                      <span className="font-medium bg-white px-2 py-0.5 rounded border border-gray-200 shadow-sm">
+                        Sex: {selected.gender}
+                      </span>
+                      <span className="font-medium bg-white px-2 py-0.5 rounded border border-gray-200 shadow-sm">
+                        ID: P-{selected.patient_id}
                       </span>
                     </div>
-                    {["302-A", "302-B"].map((bed) => (
-                      <div
-                        key={bed}
-                        className="rounded border p-1 flex flex-col items-center justify-center"
-                        style={{ backgroundColor: colors.surfaceContainerLowest, borderColor: colors.outlineVariant }}
-                      >
-                        <User size={16} style={{ color: colors.error }} />
-                        <span className="font-mono text-[10px]" style={{ color: colors.onSurfaceVariant }}>
-                          {bed}
-                        </span>
-                      </div>
-                    ))}
+                  </div>
+                  <div className="text-right">
+                    <div
+                      className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-bold border"
+                      style={{
+                        backgroundColor: statusBadges[selected.status]?.bg || "#eee",
+                        color: statusBadges[selected.status]?.text || "#333",
+                        borderColor: statusBadges[selected.status]?.text || "#ccc"
+                      }}
+                    >
+                      {React.createElement(statusBadges[selected.status]?.icon || Clock, { size: 14 })}
+                      {selected.status.replace("_", " ")}
+                    </div>
                   </div>
                 </div>
 
-                {/* Edge case overlay: no suitable bed available */}
-                {noBedAvailable && (
-                  <div
-                    className="absolute inset-0 top-32 z-10 p-4 flex flex-col items-center justify-center text-center"
-                    style={{ backgroundColor: "rgba(246,250,253,0.8)", backdropFilter: "blur(4px)" }}
-                  >
-                    <div
-                      className="w-16 h-16 rounded-full flex items-center justify-center mb-4 animate-pulse"
-                      style={{ backgroundColor: colors.errorContainer }}
-                    >
-                      <AlertTriangle size={32} style={{ color: colors.error }} />
+                <div className="p-6 space-y-6 flex-1">
+                  <div className="grid grid-cols-2 gap-6">
+                    <div className="space-y-4">
+                      <h4 className="text-xs font-bold text-teal-800 uppercase tracking-wider flex items-center gap-2">
+                        <AlertCircle size={16} /> Clinical Details
+                      </h4>
+                      <div className="p-4 rounded-xl border bg-slate-50 space-y-3">
+                        <div>
+                          <div className="text-xs font-semibold text-gray-500 mb-1">Primary Diagnosis</div>
+                          <p className="text-sm font-medium text-gray-900 leading-relaxed">
+                            {selected.diagnosis}
+                          </p>
+                        </div>
+                        <div className="pt-3 border-t grid grid-cols-2 gap-4">
+                          <div>
+                            <div className="text-xs font-semibold text-gray-500 mb-1">Priority</div>
+                            <PriorityBadge priority={selected.priority_name} />
+                          </div>
+                          <div>
+                            <div className="text-xs font-semibold text-gray-500 mb-1">Expected Stay</div>
+                            <div className="text-sm font-bold text-gray-900 flex items-center gap-1">
+                              <Calendar size={14} className="text-gray-400" /> {selected.expected_stay_duration} Days
+                            </div>
+                          </div>
+                        </div>
+                      </div>
                     </div>
-                    <h3 className="text-2xl font-semibold mb-1" style={{ color: colors.error }}>
-                      No Suitable Beds Available
-                    </h3>
-                    <p className="text-sm mb-6 max-w-[250px]" style={{ color: colors.onSurfaceVariant }}>
-                      Cardiology (CW-3) currently has 0 available Telemetry beds. Next projected discharge in 4 hours.
+
+                    <div className="space-y-4">
+                      <h4 className="text-xs font-bold text-teal-800 uppercase tracking-wider flex items-center gap-2">
+                        <Building2 size={16} /> Requested Location
+                      </h4>
+                      <div className="p-4 rounded-xl border bg-slate-50 space-y-4">
+                        <div className="flex items-start gap-3">
+                          <div className="p-2 bg-white rounded-lg border shadow-sm">
+                            <Stethoscope size={18} className="text-teal-700" />
+                          </div>
+                          <div>
+                            <div className="text-xs font-semibold text-gray-500 mb-0.5">Target Ward</div>
+                            <div className="text-sm font-bold text-gray-900">{selected.ward_name}</div>
+                          </div>
+                        </div>
+                        <div className="flex items-start gap-3">
+                          <div className="p-2 bg-white rounded-lg border shadow-sm">
+                            <BedDouble size={18} className="text-teal-700" />
+                          </div>
+                          <div>
+                            <div className="text-xs font-semibold text-gray-500 mb-0.5">Required Equipment</div>
+                            <div className="text-sm font-bold text-gray-900">{selected.bed_type_name}</div>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                {selected.status === "PENDING" && (
+                  <div className="p-6 border-t bg-slate-50 flex justify-between items-center sticky bottom-0">
+                    <p className="text-xs text-gray-500 max-w-sm">
+                      By approving this request, it will be sent to the Ward Manager for bed assignment.
                     </p>
-                    <div className="flex flex-col gap-2 w-full max-w-[200px]">
+                    <div className="flex items-center gap-3">
                       <button
-                        className="w-full py-2 rounded-lg text-sm font-semibold shadow-sm transition-colors"
-                        style={{ backgroundColor: colors.primary, color: colors.onPrimary }}
-                        onMouseEnter={(e) => (e.currentTarget.style.backgroundColor = colors.primaryContainer)}
-                        onMouseLeave={(e) => (e.currentTarget.style.backgroundColor = colors.primary)}
+                        onClick={() => setShowRejectModal(true)}
+                        disabled={isUpdating}
+                        className="px-6 py-2.5 rounded-lg border border-red-200 text-red-700 font-bold text-sm bg-white hover:bg-red-50 transition-colors flex items-center gap-2"
                       >
-                        Add to Waiting List
+                        <XCircle size={18} /> Reject Admission
                       </button>
                       <button
-                        className="w-full py-2 rounded-lg text-sm font-semibold border transition-colors hover:opacity-80"
-                        style={{ color: colors.primary, borderColor: colors.outlineVariant, backgroundColor: colors.surfaceContainerLowest }}
+                        onClick={() => handleDoctorApprove(selected.id)}
+                        disabled={isUpdating}
+                        className="px-6 py-2.5 rounded-lg bg-teal-700 hover:bg-teal-800 text-white font-bold text-sm shadow transition-transform active:scale-95 flex items-center gap-2"
                       >
-                        View Alternative Wards
+                        {isUpdating ? <Loader2 className="animate-spin" size={18} /> : <CheckCircle2 size={18} />}
+                        Approve &amp; Send to Ward Manager
                       </button>
                     </div>
                   </div>
                 )}
+                
+                {selected.status === "REJECTED" && (
+                  <div className="p-6 border-t bg-red-50 text-red-900 flex justify-between items-center">
+                    <div>
+                      <div className="font-bold text-sm">Admission Rejected</div>
+                      <div className="text-xs mt-1">This request was rejected. It will not proceed to the ward manager.</div>
+                    </div>
+                  </div>
+                )}
+                
+                {selected.status === "APPROVED" && (
+                  <div className="p-6 border-t bg-blue-50 text-blue-900 flex justify-between items-center">
+                    <div>
+                      <div className="font-bold text-sm">Admission Approved</div>
+                      <div className="text-xs mt-1">Pending bed assignment by Ward Manager.</div>
+                    </div>
+                  </div>
+                )}
               </div>
-            </div>
-
-            {/* Action bar */}
-            <div
-              className="mt-auto rounded-xl border p-4 flex justify-between items-center shadow-sm"
-              style={{ backgroundColor: colors.surfaceContainerLowest, borderColor: colors.outlineVariant }}
-            >
-              <button
-                className="px-4 py-2 rounded-lg text-sm font-semibold transition-colors hover:opacity-80"
-                style={{ color: colors.error }}
-                onMouseEnter={(e) => (e.currentTarget.style.backgroundColor = colors.errorContainer)}
-                onMouseLeave={(e) => (e.currentTarget.style.backgroundColor = "transparent")}
-              >
-                Cancel Admission
-              </button>
-              <div className="flex gap-4">
-                <button
-                  className="px-6 py-2 rounded-lg border text-sm font-semibold transition-colors hover:opacity-80"
-                  style={{ borderColor: colors.outlineVariant, color: colors.onSurface }}
-                >
-                  Save Draft
-                </button>
-                <button
-                  disabled
-                  className="px-6 py-2 rounded-lg text-sm font-semibold cursor-not-allowed opacity-50 flex items-center gap-2"
-                  style={{ backgroundColor: colors.surfaceVariant, color: colors.onSurfaceVariant }}
-                >
-                  Confirm Admission <CheckCircle2 size={18} />
-                </button>
+            ) : (
+              <div className="flex-1 flex flex-col items-center justify-center px-8 py-12 text-center bg-gradient-to-b from-white to-slate-50/70">
+                <div className="relative w-56 h-48 mb-7" aria-hidden="true">
+                  <div className="absolute w-36 h-36 rounded-full bg-teal-50 left-10 top-5" />
+                  <div className="absolute w-8 h-8 rounded-full bg-sky-100 right-7 top-5" />
+                  <div className="absolute w-4 h-4 rounded-full bg-amber-200 left-5 bottom-9" />
+                  <div className="absolute left-[58px] top-7 w-32 h-40 rounded-2xl bg-white border border-slate-200 shadow-lg rotate-[-5deg]" />
+                  <div className="absolute left-[69px] top-5 w-32 h-40 rounded-2xl bg-white border border-slate-200 shadow-xl rotate-[4deg] p-4">
+                    <div className="w-9 h-2 rounded-full bg-teal-700 mx-auto mb-4" />
+                    <div className="flex items-center gap-2 mb-3">
+                      <div className="w-7 h-7 rounded-lg bg-teal-50 text-teal-700 flex items-center justify-center">
+                        <Stethoscope size={15} />
+                      </div>
+                      <div className="space-y-1">
+                        <div className="w-12 h-1.5 rounded bg-slate-200" />
+                        <div className="w-8 h-1 rounded bg-slate-100" />
+                      </div>
+                    </div>
+                    <div className="space-y-2.5 mt-4">
+                      <div className="h-1.5 w-full rounded bg-slate-100" />
+                      <div className="h-1.5 w-4/5 rounded bg-slate-100" />
+                      <div className="h-1.5 w-full rounded bg-slate-100" />
+                    </div>
+                    <div className="absolute -right-4 -bottom-3 w-11 h-11 rounded-2xl bg-teal-700 text-white border-4 border-white shadow-md flex items-center justify-center">
+                      <FileCheck size={20} />
+                    </div>
+                  </div>
+                </div>
+                <span className="text-[11px] font-bold uppercase tracking-[0.18em] text-teal-700 mb-2">
+                  Admissions review
+                </span>
+                <h3 className="text-xl font-bold text-slate-800">
+                  {filteredAdmissions.length === 0
+                    ? "All caught up"
+                    : "Your review workspace is ready"}
+                </h3>
+                <p className="mt-2 max-w-sm text-sm leading-relaxed text-slate-500">
+                  {filteredAdmissions.length === 0
+                    ? "There are no requests in this view right now. New submissions will show up in the list."
+                    : "Choose a patient request from the list to see their clinical details and review the admission."}
+                </p>
+                <div className="mt-6 flex items-center gap-2 rounded-full border border-teal-100 bg-teal-50/80 px-4 py-2 text-xs font-medium text-teal-800">
+                  <ShieldCheck size={15} />
+                  Patient information is handled securely
+                </div>
               </div>
-            </div>
-          </section>
+            )}
+          </div>
         </main>
       </div>
+
+      {/* Reject Modal */}
+      {showRejectModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4">
+          <div className="bg-white rounded-2xl max-w-md w-full shadow-2xl overflow-hidden animate-in fade-in zoom-in-95 duration-200">
+            <div className="p-5 border-b flex items-center gap-3 bg-red-50 text-red-900">
+              <AlertCircle size={24} />
+              <h3 className="text-lg font-bold">Reject Admission</h3>
+            </div>
+            <form onSubmit={handleDoctorRejectSubmit} className="p-6">
+              <label className="block text-sm font-bold text-gray-700 mb-2">
+                Reason for Rejection *
+              </label>
+              <textarea
+                required
+                rows={4}
+                value={rejectionReasonInput}
+                onChange={(e) => setRejectionReasonInput(e.target.value)}
+                placeholder="e.g., Insufficient clinical criteria for inpatient admission. Recommend outpatient follow-up."
+                className="w-full p-3 rounded-xl border focus:outline-none focus:ring-2 focus:ring-red-500 text-sm"
+              />
+              <p className="text-xs text-gray-500 mt-2">
+                This note will be added to the patient's record and visible to triage staff.
+              </p>
+
+              <div className="mt-6 flex justify-end gap-3">
+                <button
+                  type="button"
+                  onClick={() => setShowRejectModal(false)}
+                  className="px-4 py-2 text-sm font-semibold text-gray-600 hover:bg-gray-100 rounded-lg"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={isUpdating}
+                  className="px-4 py-2 text-sm font-bold text-white bg-red-600 hover:bg-red-700 rounded-lg flex items-center gap-2"
+                >
+                  {isUpdating ? <Loader2 className="animate-spin" size={16} /> : <XCircle size={16} />}
+                  Confirm Rejection
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

@@ -2,8 +2,6 @@ import React from "react";
 import {
   Search,
   Bell,
-  Clock,
-  ChevronDown,
   LayoutDashboard,
   BedDouble,
   User,
@@ -27,6 +25,10 @@ import {
   MoreVertical,
   LogOut,
 } from "lucide-react";
+import Sidebar from "../components/Sidebar";
+import UserProfileHover from "../components/UserProfileHover";
+import { useGetWardsQuery, useGetAllHistoryQuery } from "../store/api/hospitalApi";
+
 
 // ---- Design tokens (mirrors the original Tailwind config) ----
 const colors = {
@@ -56,8 +58,8 @@ function NavLink({ icon: Icon, label, active, badge }) {
     <a
       href="#"
       className={`flex items-center gap-3 px-4 py-3 rounded-lg font-semibold text-xs tracking-wide transition-colors active:scale-95 duration-150 relative ${active
-          ? ""
-          : "text-slate-500 hover:bg-slate-100"
+        ? ""
+        : "text-slate-500 hover:bg-slate-100"
         }`}
       style={
         active
@@ -220,7 +222,75 @@ const activity = [
   },
 ];
 
+// ---- Map history action → icon/color/label ----
+function mapHistoryItem(item) {
+  const actionMap = {
+    ADMISSION_CREATED: { icon: LogIn, color: "#00647C", label: "Admission Requested" },
+    DOCTOR_APPROVED:   { icon: CheckCircle2, color: "#166534", label: "Approved" },
+    DOCTOR_REJECTED:   { icon: AlertTriangle, color: "#BA1A1A", label: "Rejected" },
+    ADMITTED:          { icon: CheckCircle2, color: "#00647C", label: "Bed Assigned" },
+    TRANSFERRED:       { icon: ArrowLeftRight, color: "#A86516", label: "Transferred" },
+    DISCHARGED:        { icon: LogOut, color: "#BA1A1A", label: "Discharged" },
+  };
+  const meta = actionMap[item.action] || { icon: LogIn, color: "#6E797E", label: item.action };
+  const fromLoc = item.from_ward_name ? `${item.from_ward_name}${item.from_bed_name ? ` (${item.from_bed_name})` : ""}` : "Start";
+  const toLoc   = item.to_ward_name   ? `${item.to_ward_name}${item.to_bed_name ? ` (${item.to_bed_name})` : ""}`   : "--";
+  const d = new Date(item.created_at);
+  const time = d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  const date = d.toLocaleDateString([], { month: "short", day: "numeric" });
+  return {
+    time: `${date} ${time}`,
+    id: item.patient_id || "--",
+    name: item.patient_name || "Patient",
+    action: meta.label,
+    icon: meta.icon,
+    color: meta.color,
+    route: `${fromLoc} → ${toLoc}`,
+    performedBy: item.performed_by_name || "System",
+    reason: item.reason || "--",
+  };
+}
+
 export default function HospitalDashboard() {
+  const [showAll, setShowAll] = React.useState(false);
+  const [isRefreshing, setIsRefreshing] = React.useState(false);
+  const [refreshError, setRefreshError] = React.useState("");
+
+  // ---- Live API data ----
+  const { data: wardsData, isLoading: wardsLoading, refetch: refetchWards } = useGetWardsQuery();
+  const { data: historyData, isLoading: historyLoading, refetch: refetchHistory } = useGetAllHistoryQuery();
+
+  const wards = wardsData?.wards || [];
+  const rawHistory = historyData?.history || [];
+  const activities = rawHistory.map(mapHistoryItem);
+
+  // ---- KPI calculations from live ward data ----
+  const totalBeds = wards.reduce((sum, w) => sum + (Number(w.total_beds) || 0), 0);
+  const occupiedBeds = wards.reduce((sum, w) => sum + (Number(w.occupied_beds) || 0), 0);
+  const availableBeds = totalBeds - occupiedBeds;
+  const occupancyRate = totalBeds > 0 ? ((occupiedBeds / totalBeds) * 100).toFixed(1) : "0.0";
+
+  // ---- Counters from history ----
+  const todayStr = new Date().toDateString();
+  const todayHistory = rawHistory.filter(h => new Date(h.created_at).toDateString() === todayStr);
+  const admissionsToday = todayHistory.filter(h => h.action === "ADMITTED").length;
+  const dischargesTotal = rawHistory.filter(h => h.action === "DISCHARGED").length;
+  const transfersTotal  = rawHistory.filter(h => h.action === "TRANSFERRED").length;
+
+  const handleRefresh = async () => {
+    setIsRefreshing(true);
+    setRefreshError("");
+    try {
+      await Promise.all([refetchWards().unwrap(), refetchHistory().unwrap()]);
+    } catch {
+      setRefreshError("Could not refresh dashboard data. Please try again.");
+    } finally {
+      setIsRefreshing(false);
+    }
+  };
+
+  const displayedActivities = showAll ? activities : activities.slice(0, 5);
+
   return (
     <div className="min-h-screen font-sans" style={{ backgroundColor: colors.surface, color: colors.onSurface }}>
       {/* Top Nav */}
@@ -243,184 +313,179 @@ export default function HospitalDashboard() {
               style={{ color: colors.onSurface }}
             />
           </div>
-          <div className="flex gap-4 items-center">
-            <button className="relative hover:opacity-80 transition-opacity" style={{ color: colors.onSurfaceVariant }}>
-              <Bell size={20} />
-              <span
-                className="absolute -top-1 -right-1 w-2 h-2 rounded-full animate-pulse"
-                style={{ backgroundColor: colors.error }}
-              />
-            </button>
-            <button className="hover:opacity-80 transition-opacity" style={{ color: colors.onSurfaceVariant }}>
-              <Clock size={20} />
-            </button>
-          </div>
-          <div className="h-8 w-px" style={{ backgroundColor: colors.outlineVariant }} />
-          <div className="flex items-center gap-2 cursor-pointer hover:opacity-80 transition-opacity">
-            <div
-              className="w-8 h-8 rounded-full border flex items-center justify-center text-xs font-semibold"
-              style={{ borderColor: colors.outlineVariant, backgroundColor: colors.secondaryContainer, color: colors.onSecondaryContainer }}
-            >
-              A
-            </div>
-            <span className="hidden md:inline text-xs font-semibold">Admin</span>
-            <ChevronDown size={14} />
-          </div>
+          <UserProfileHover />
         </div>
       </header>
 
       {/* Side Nav */}
-      <nav
-        className="w-64 h-screen fixed left-0 top-0 overflow-y-auto border-r flex flex-col gap-1 p-4 z-50"
-        style={{ backgroundColor: colors.surfaceContainerLowest, borderColor: colors.outlineVariant }}
-      >
-        <div className="mb-8 px-2 mt-4">
-          <h1 className="text-2xl font-bold" style={{ color: colors.primary }}>
-            CityCare General
-          </h1>
-          <p className="text-xs mt-1" style={{ color: colors.onSurfaceVariant }}>
-            Staff ID: 94021
-          </p>
-        </div>
-        <NavLink icon={LayoutDashboard} label="Dashboard" active />
-        <NavLink icon={BedDouble} label="Wards & Beds" />
-        <NavLink icon={User} label="Patients" />
-        <NavLink icon={LogIn} label="Admissions" />
-        <NavLink icon={ArrowLeftRight} label="Transfers" />
-        <NavLink icon={ListChecks} label="Waiting List" />
-        <NavLink icon={ClipboardList} label="Ward Logs" />
-        <NavLink icon={BarChart3} label="Analytics" />
-        <NavLink icon={FileText} label="Reports" />
-        <NavLink icon={BellRing} label="Alerts" badge="3" />
-        <NavLink icon={Settings} label="Settings" />
-      </nav>
+      <Sidebar />
 
       {/* Main content */}
       <main className="ml-64 p-6 max-w-[1440px] mx-auto flex flex-col gap-8">
-        {/* Filter bar */}
-        <section
-          className="flex flex-wrap items-center justify-between gap-4 p-4 rounded-xl border shadow-sm"
-          style={{ backgroundColor: colors.surfaceContainerLowest, borderColor: colors.outlineVariant }}
-        >
-          <div className="flex gap-4 items-center flex-wrap">
-            {[
-              { icon: Calendar, label: "Today, Oct 24" },
-              { icon: Siren, label: "All Wards" },
-              { icon: Clock, label: "Current Shift (08:00 - 16:00)" },
-            ].map((f) => (
-              <div
-                key={f.label}
-                className="flex items-center gap-2 rounded-md px-3 py-1.5 border cursor-pointer hover:border-current transition-colors text-sm"
-                style={{ borderColor: colors.outlineVariant, backgroundColor: colors.surfaceBright }}
-              >
-                <f.icon size={16} />
-                <span>{f.label}</span>
-                <ChevronDown size={14} />
-              </div>
-            ))}
-          </div>
-          <button
-            className="flex items-center gap-2 text-sm font-semibold px-3 py-1.5 rounded-md hover:bg-slate-100 transition-all"
-            style={{ color: colors.primary }}
-          >
-            <RefreshCw size={16} />
-            Refresh Data
-          </button>
-        </section>
-
-        {/* KPI grid */}
-        <section className="grid grid-cols-2 md:grid-cols-4 gap-4">
-          <KpiCard label="Total Beds" icon={BedDouble} value="250" trendLabel="Capacity" />
-          <KpiCard label="Occupied" icon={BedDouble} value="198" trend="up" trendLabel="+4" />
-          <KpiCard label="Available" icon={CheckCircle2} value="32" trend="down" trendLabel="-2" highlight />
-          <KpiCard label="Occupancy Rate" icon={PieChart} value="79.2%" trendLabel="Target: < 85%" muted />
-        </section>
-
-        {/* Two-column layout */}
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-          {/* Left column */}
-          <div className="lg:col-span-1 flex flex-col gap-6">
-            <div className="rounded-xl border overflow-hidden" style={{ backgroundColor: colors.surfaceContainerLowest, borderColor: colors.outlineVariant }}>
-              <div
-                className="px-5 py-4 border-b flex justify-between items-center"
-                style={{ backgroundColor: colors.surfaceBright, borderColor: colors.outlineVariant }}
-              >
-                <h3 className="text-lg font-semibold">Ward Occupancy</h3>
-                <MoreVertical size={18} style={{ color: colors.onSurfaceVariant }} className="cursor-pointer" />
-              </div>
-              <div className="p-5 flex flex-col gap-5">
-                <WardBar label="Emergency" pct="96.7% (29/30)" count="96.7%" color={colors.error} pulse />
-                <WardBar label="ICU" pct="90.0% (18/20)" count="90%" color={colors.tertiaryContainer} />
-                <WardBar label="General Ward" pct="68.8% (110/160)" count="68.8%" color={colors.primary} />
-              </div>
-            </div>
-
-            {/* Critical alerts */}
-            <div
-              className="rounded-xl overflow-hidden border-l-4"
-              style={{ backgroundColor: "rgba(186,26,26,0.05)", borderLeftColor: colors.error }}
+        {!showAll && (
+          <>
+            {/* Filter bar */}
+            <section
+              className="flex flex-wrap items-center justify-between gap-4 p-4 rounded-xl border shadow-sm"
+              style={{ backgroundColor: colors.surfaceContainerLowest, borderColor: colors.outlineVariant }}
             >
-              <div className="px-5 py-4 border-b flex justify-between items-center" style={{ borderColor: "rgba(186,26,26,0.2)" }}>
-                <h3 className="text-lg font-semibold flex items-center gap-2" style={{ color: colors.error }}>
-                  <AlertTriangle size={20} /> Critical Alerts
-                </h3>
-              </div>
-              <div className="p-4 flex flex-col gap-3">
-                <div
-                  className="p-3 rounded border flex gap-3 items-start"
-                  style={{ backgroundColor: colors.surfaceContainerLowest, borderColor: "rgba(186,26,26,0.3)" }}
-                >
-                  <AlertCircle size={20} className="mt-0.5" style={{ color: colors.error }} />
-                  <div>
-                    <p className="text-sm font-bold">Emergency Capacity Alert</p>
-                    <p className="text-sm mt-1" style={{ color: colors.onSurfaceVariant }}>
-                      Only 1 bed available in Emergency. Divert protocol recommended.
-                    </p>
-                    <p className="text-[10px] mt-2 font-semibold" style={{ color: colors.error }}>
-                      10 MINS AGO
-                    </p>
-                  </div>
+              <div className="flex gap-4 items-center flex-wrap">
+                <div className="flex items-center gap-2 rounded-md px-3 py-1.5 border text-sm" style={{ borderColor: colors.outlineVariant, backgroundColor: colors.surfaceBright }}>
+                  <Calendar size={16} />
+                  <span>{new Date().toLocaleDateString([], { weekday: "short", month: "short", day: "numeric" })}</span>
                 </div>
-                <div
-                  className="p-3 rounded border flex gap-3 items-start"
-                  style={{ backgroundColor: colors.surfaceContainerLowest, borderColor: "rgba(168,101,22,0.3)" }}
-                >
-                  <Bell size={20} className="mt-0.5" style={{ color: colors.tertiaryContainer }} />
-                  <div>
-                    <p className="text-sm font-bold">ICU Threshold Reached</p>
-                    <p className="text-sm mt-1" style={{ color: colors.onSurfaceVariant }}>
-                      ICU occupancy has reached 90% (18/20 beds).
-                    </p>
-                    <p className="text-[10px] mt-2 font-semibold" style={{ color: colors.tertiaryContainer }}>
-                      45 MINS AGO
-                    </p>
-                  </div>
+                <div className="flex items-center gap-2 rounded-md px-3 py-1.5 border text-sm" style={{ borderColor: colors.outlineVariant, backgroundColor: colors.surfaceBright }}>
+                  <Siren size={16} />
+                  <span>All Wards ({wards.length})</span>
                 </div>
               </div>
-            </div>
-          </div>
+              <button
+                type="button"
+                onClick={handleRefresh}
+                disabled={isRefreshing}
+                className="flex items-center gap-2 text-sm font-semibold px-3 py-1.5 rounded-md hover:bg-slate-100 transition-all disabled:opacity-60"
+                style={{ color: colors.primary }}
+              >
+                <RefreshCw size={16} className={isRefreshing ? "animate-spin" : ""} />
+                {isRefreshing ? "Refreshing..." : "Refresh Data"}
+              </button>
+            </section>
+            {refreshError && <p role="alert" className="-mt-4 text-sm text-red-700">{refreshError}</p>}
 
-          {/* Right column */}
-          <div className="lg:col-span-2 flex flex-col gap-6">
-            {/* Secondary KPI strip */}
-            <div className="grid grid-cols-4 gap-4">
-              <SecondaryKpi label="Waiting" value="14" />
-              <SecondaryKpi label="Admissions" value="47" color={colors.primary} border={colors.primary} />
-              <SecondaryKpi label="Discharges" value="39" />
-              <SecondaryKpi label="Transfers" value="21" color={colors.tertiaryContainer} border={colors.tertiaryContainer} />
-            </div>
+            {/* KPI grid */}
+            <section className="grid grid-cols-2 md:grid-cols-4 gap-4">
+              <KpiCard label="Total Beds" icon={BedDouble} value={wardsLoading ? "…" : String(totalBeds)} trendLabel={`${wards.length} Ward${wards.length !== 1 ? "s" : ""}`} />
+              <KpiCard label="Occupied" icon={BedDouble} value={wardsLoading ? "…" : String(occupiedBeds)} trend="up" trendLabel="Active Patients" />
+              <KpiCard label="Available" icon={CheckCircle2} value={wardsLoading ? "…" : String(availableBeds)} trend="down" trendLabel="Open Beds" highlight />
+              <KpiCard label="Occupancy Rate" icon={PieChart} value={wardsLoading ? "…" : `${occupancyRate}%`} trendLabel="Target: < 85%" muted />
+            </section>
+          </>
+        )}
 
-            {/* Recent activity table */}
-            <div className="rounded-xl border overflow-hidden flex-1 flex flex-col" style={{ backgroundColor: colors.surfaceContainerLowest, borderColor: colors.outlineVariant }}>
+        {/* Layout: Normal 2-column or Full Page Expanded when showAll is true */}
+        <div className={showAll ? "w-full" : "grid grid-cols-1 lg:grid-cols-3 gap-6"}>
+          {/* Left column (hidden in Show All mode) */}
+          {!showAll && (
+            <div className="lg:col-span-1 flex flex-col gap-6">
+              <div className="rounded-xl border overflow-hidden" style={{ backgroundColor: colors.surfaceContainerLowest, borderColor: colors.outlineVariant }}>
+                <div
+                  className="px-5 py-4 border-b flex justify-between items-center"
+                  style={{ backgroundColor: colors.surfaceBright, borderColor: colors.outlineVariant }}
+                >
+                  <h3 className="text-lg font-semibold">Ward Occupancy</h3>
+                  <MoreVertical size={18} style={{ color: colors.onSurfaceVariant }} className="cursor-pointer" />
+                </div>
+                <div className="p-5 flex flex-col gap-5">
+                  {wardsLoading ? (
+                    <p className="text-sm text-gray-400 text-center py-4">Loading wards…</p>
+                  ) : wards.length === 0 ? (
+                    <p className="text-sm text-gray-400 text-center py-4">No wards found.</p>
+                  ) : (
+                    wards.map((ward, i) => {
+                      const wardColors = [colors.primary, "#6750a4", colors.error, "#A86516", "#166534"];
+                      const color = wardColors[i % wardColors.length];
+                      const total = Number(ward.total_beds) || 1;
+                      const occupied = Number(ward.occupied_beds) || 0;
+                      const pct = ((occupied / total) * 100).toFixed(0);
+                      return (
+                        <WardBar
+                          key={ward.id}
+                          label={ward.name}
+                          pct={`${pct}% (${occupied}/${total})`}
+                          count={`${pct}%`}
+                          color={color}
+                          pulse={Number(pct) >= 90}
+                        />
+                      );
+                    })
+                  )}
+                </div>
+              </div>
+
+              {/* Critical alerts */}
               <div
-                className="px-5 py-4 border-b flex justify-between items-center"
+                className="rounded-xl overflow-hidden border-l-4"
+                style={{ backgroundColor: "rgba(186,26,26,0.05)", borderLeftColor: colors.error }}
+              >
+                <div className="px-5 py-4 border-b flex justify-between items-center" style={{ borderColor: "rgba(186,26,26,0.2)" }}>
+                  <h3 className="text-lg font-semibold flex items-center gap-2" style={{ color: colors.error }}>
+                    <AlertTriangle size={20} /> Critical Alerts
+                  </h3>
+                </div>
+                <div className="p-4 flex flex-col gap-3">
+                  <div
+                    className="p-3 rounded border flex gap-3 items-start"
+                    style={{ backgroundColor: colors.surfaceContainerLowest, borderColor: "rgba(186,26,26,0.3)" }}
+                  >
+                    <AlertCircle size={20} className="mt-0.5" style={{ color: colors.error }} />
+                    <div>
+                      <p className="text-sm font-bold">Emergency Capacity Alert</p>
+                      <p className="text-sm mt-1" style={{ color: colors.onSurfaceVariant }}>
+                        Only 1 bed available in Emergency. Divert protocol recommended.
+                      </p>
+                      <p className="text-[10px] mt-2 font-semibold" style={{ color: colors.error }}>
+                        10 MINS AGO
+                      </p>
+                    </div>
+                  </div>
+                  <div
+                    className="p-3 rounded border flex gap-3 items-start"
+                    style={{ backgroundColor: colors.surfaceContainerLowest, borderColor: "rgba(168,101,22,0.3)" }}
+                  >
+                    <Bell size={20} className="mt-0.5" style={{ color: colors.tertiaryContainer }} />
+                    <div>
+                      <p className="text-sm font-bold">ICU Threshold Reached</p>
+                      <p className="text-sm mt-1" style={{ color: colors.onSurfaceVariant }}>
+                        ICU occupancy has reached 90% (18/20 beds).
+                      </p>
+                      <p className="text-[10px] mt-2 font-semibold" style={{ color: colors.tertiaryContainer }}>
+                        45 MINS AGO
+                      </p>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Right column / Full Page Container */}
+          <div className={showAll ? "w-full flex flex-col gap-6" : "lg:col-span-2 flex flex-col gap-6"}>
+            {/* Secondary KPI strip (hidden when showAll is true) */}
+            {!showAll && (
+              <div className="grid grid-cols-4 gap-4">
+                <SecondaryKpi label="Total History" value={historyLoading ? "…" : String(rawHistory.length)} />
+                <SecondaryKpi label="Admissions Today" value={historyLoading ? "…" : String(admissionsToday)} color={colors.primary} border={colors.primary} />
+                <SecondaryKpi label="Discharges" value={historyLoading ? "…" : String(dischargesTotal)} />
+                <SecondaryKpi label="Transfers" value={historyLoading ? "…" : String(transfersTotal)} color={colors.tertiaryContainer} border={colors.tertiaryContainer} />
+              </div>
+            )}
+
+            {/* Recent activity table card */}
+            <div className="rounded-xl border overflow-hidden flex-1 flex flex-col shadow-sm" style={{ backgroundColor: colors.surfaceContainerLowest, borderColor: colors.outlineVariant }}>
+              <div
+                className="px-6 py-4 border-b flex justify-between items-center"
                 style={{ backgroundColor: colors.surfaceBright, borderColor: colors.outlineVariant }}
               >
-                <h3 className="text-lg font-semibold">Recent Patient Activity</h3>
-                <button className="text-sm font-semibold hover:underline" style={{ color: colors.primary }}>
-                  View All
+                <div>
+                  <h3 className="text-xl font-bold text-gray-900">
+                    {showAll ? "Complete Patient Activity Audit Log" : "Recent Patient Activity"}
+                  </h3>
+                  <p className="text-xs text-gray-500 mt-0.5">
+                    {showAll
+                      ? `Displaying all ${activities.length} activity records across the hospital.`
+                      : historyLoading
+                        ? "Loading activity records…"
+                        : `Showing recent 5 of ${activities.length} total activity logs.`}
+                  </p>
+                </div>
+                <button
+                  onClick={() => setShowAll(!showAll)}
+                  className="px-4 py-2 rounded-lg text-xs font-bold shadow-sm transition-transform active:scale-95 bg-teal-700 hover:bg-teal-800 text-white cursor-pointer"
+                >
+                  {showAll ? "← Back to Dashboard Overview" : "Show All Activity Records"}
                 </button>
               </div>
+
               <div className="overflow-x-auto">
                 <table className="w-full text-left border-collapse">
                   <thead>
@@ -428,34 +493,48 @@ export default function HospitalDashboard() {
                       className="text-xs font-semibold border-b"
                       style={{ backgroundColor: colors.surfaceContainerLow, color: colors.onSurfaceVariant, borderColor: colors.outlineVariant }}
                     >
-                      <th className="py-2 px-4">Time</th>
-                      <th className="py-2 px-4">Patient ID</th>
-                      <th className="py-2 px-4">Action</th>
-                      <th className="py-2 px-4">From / To Ward</th>
-                      <th className="py-2 px-4">Status</th>
+                      <th className="py-3 px-4">Time</th>
+                      <th className="py-3 px-4">Patient Name</th>
+                      <th className="py-3 px-4">Patient ID</th>
+                      <th className="py-3 px-4">Action</th>
+                      <th className="py-3 px-4">From / To Location</th>
+                      <th className="py-3 px-4">Performed By</th>
+                      <th className="py-3 px-4">Reason</th>
                     </tr>
                   </thead>
                   <tbody className="text-sm divide-y" style={{ borderColor: colors.outlineVariant }}>
-                    {activity.map((row) => (
-                      <tr key={row.id} className="hover:bg-slate-50 transition-colors" style={{ borderColor: colors.outlineVariant }}>
-                        <td className="py-3 px-4 font-mono" style={{ color: colors.onSurfaceVariant }}>
-                          {row.time}
-                        </td>
-                        <td className="py-3 px-4 font-mono font-medium">{row.id}</td>
-                        <td className="py-3 px-4">
-                          <span className="inline-flex items-center gap-1" style={{ color: row.color }}>
-                            <row.icon size={14} /> {row.action}
+                    {historyLoading ? (
+                      <tr>
+                        <td colSpan={7} className="py-10 text-center text-sm text-gray-400">Loading activity records…</td>
+                      </tr>
+                    ) : displayedActivities.length === 0 ? (
+                      <tr>
+                        <td colSpan={7} className="py-10 text-center text-sm text-gray-400">No activity records found.</td>
+                      </tr>
+                    ) : displayedActivities.map((row, idx) => (
+                      <tr key={idx} className="hover:bg-slate-50 transition-colors" style={{ borderColor: colors.outlineVariant }}>
+                        <td className="py-3.5 px-4 font-mono text-xs text-gray-600">{row.time}</td>
+                        <td className="py-3.5 px-4 font-bold text-gray-900">{row.name}</td>
+                        <td className="py-3.5 px-4 font-mono font-bold text-xs" style={{ color: colors.primary }}>{row.id}</td>
+                        <td className="py-3.5 px-4">
+                          <span className="inline-flex items-center gap-1.5 text-xs font-semibold" style={{ color: row.color }}>
+                            <row.icon size={15} /> {row.action}
                           </span>
                         </td>
-                        <td className="py-3 px-4">{row.route}</td>
-                        <td className="py-3 px-4">
-                          <StatusPill color={row.statusColor}>{row.status}</StatusPill>
-                        </td>
+                        <td className="py-3.5 px-4 text-xs font-medium text-gray-700">{row.route}</td>
+                        <td className="py-3.5 px-4 text-xs font-medium text-gray-700">{row.performedBy}</td>
+                        <td className="py-3.5 px-4 text-xs text-gray-500 italic max-w-[200px] truncate" title={row.reason}>{row.reason}</td>
                       </tr>
                     ))}
                   </tbody>
                 </table>
               </div>
+
+              {!showAll && (
+                <div className="p-3 border-t text-xs text-center text-gray-500 bg-slate-50 border-slate-200">
+                  Showing <strong>5</strong> of <strong>{activities.length}</strong> total activity logs. Click <strong>Show All Activity Records</strong> to expand entire view.
+                </div>
+              )}
             </div>
           </div>
         </div>

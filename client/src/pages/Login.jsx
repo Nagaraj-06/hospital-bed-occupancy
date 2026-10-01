@@ -1,5 +1,7 @@
 import React, { useState } from "react";
-import { Hospital, ShieldCheck, IdCard, Lock } from "lucide-react";
+import { Hospital, ShieldCheck, IdCard, Lock, AlertCircle } from "lucide-react";
+import { useNavigate } from "react-router-dom";
+import { useLoginMutation } from "../store/api/authApi";
 
 // ---- Design tokens (mirrors the original Tailwind config) ----
 const colors = {
@@ -19,11 +21,20 @@ const colors = {
 export default function HospitalLogin() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
-  const [remember, setRemember] = useState(false);
+  const [role, setRole] = useState("Staff");
+  const [error, setError] = useState(null);
+  const navigate = useNavigate();
+  const [login, { isLoading }] = useLoginMutation();
 
-  const handleSubmit = (e) => {
+  const handleSubmit = async (e) => {
     e.preventDefault();
-    // Wire up to your auth flow here.
+    setError(null);
+    try {
+      await login({ email, password, role }).unwrap();
+      navigate("/dashboard");
+    } catch (err) {
+      setError(err.data?.error || err.error || "Login failed");
+    }
   };
 
   return (
@@ -33,7 +44,10 @@ export default function HospitalLogin() {
     >
       <main
         className="w-full max-w-5xl rounded-xl shadow-sm border flex flex-col md:flex-row overflow-hidden min-h-[600px]"
-        style={{ backgroundColor: colors.surfaceContainerLowest, borderColor: colors.outlineVariant }}
+        style={{
+          backgroundColor: colors.surfaceContainerLowest,
+          borderColor: colors.outlineVariant,
+        }}
       >
         {/* Left: Brand area */}
         <section
@@ -42,7 +56,11 @@ export default function HospitalLogin() {
         >
           {/* Subtle background decoration */}
           <div className="absolute inset-0 opacity-10 pointer-events-none">
-            <svg className="w-full h-full" preserveAspectRatio="none" viewBox="0 0 100 100">
+            <svg
+              className="w-full h-full"
+              preserveAspectRatio="none"
+              viewBox="0 0 100 100"
+            >
               <polygon fill="currentColor" points="0,100 100,0 100,100" />
             </svg>
           </div>
@@ -62,7 +80,8 @@ export default function HospitalLogin() {
               className="text-base mt-4 max-w-sm leading-relaxed"
               style={{ color: colors.primaryFixedDim }}
             >
-              Smart hospital capacity and patient flow management. Secure access for authorized clinical staff only.
+              Smart hospital capacity and patient flow management. Secure access
+              for authorized clinical staff only.
             </p>
           </div>
 
@@ -82,34 +101,72 @@ export default function HospitalLogin() {
         >
           <div className="max-w-md w-full mx-auto">
             <div className="mb-6">
-              <h2 className="text-2xl font-semibold mb-1">Staff Login</h2>
+              <h2 className="text-2xl font-semibold mb-1">System Access</h2>
               <p className="text-sm" style={{ color: colors.onSurfaceVariant }}>
-                Please authenticate with your Staff ID or Email to access clinical systems.
+                Choose your role, then sign in with your staff email and
+                password.
               </p>
             </div>
 
-            <form onSubmit={handleSubmit} className="space-y-4">
-              {/* Email / Staff ID */}
+            <form
+              onSubmit={handleSubmit}
+              className="space-y-4"
+              autoComplete="off"
+            >
+              {error && (
+                <div className="flex items-center gap-2 p-3 text-sm text-red-700 bg-red-50 rounded-lg">
+                  <AlertCircle size={16} />
+                  <span>{error}</span>
+                </div>
+              )}
+              {/* Role Selection (Top) */}
+              <div
+                className="flex bg-slate-100 p-1 rounded-xl mb-6 shadow-inner"
+                role="group"
+                aria-label="Choose your role"
+              >
+                {["Staff", "Doctor", "Ward Manager"].map((r) => (
+                  <button
+                    key={r}
+                    type="button"
+                    onClick={() => setRole(r)}
+                    aria-pressed={role === r}
+                    className={`flex-1 py-2 text-xs md:text-sm font-semibold rounded-lg transition-all duration-200 ${
+                      role === r
+                        ? "bg-white shadow-sm"
+                        : "text-gray-500 hover:text-gray-700"
+                    }`}
+                    style={role === r ? { color: colors.primary } : {}}
+                  >
+                    {r}
+                  </button>
+                ))}
+              </div>
+              {/* Email */}
               <div>
                 <label
                   htmlFor="email"
                   className="block text-xs font-semibold tracking-wide mb-1"
                   style={{ color: colors.onSurfaceVariant }}
                 >
-                  Email / Staff ID
+                  Email
                 </label>
                 <div className="relative">
-                  <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none" style={{ color: colors.outline }}>
+                  <div
+                    className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none"
+                    style={{ color: colors.outline }}
+                  >
                     <IdCard size={18} />
                   </div>
                   <input
                     id="email"
                     name="email"
-                    type="text"
+                    type="email"
                     required
                     value={email}
+                    autoComplete="off"
+                    placeholder="Enter your email"
                     onChange={(e) => setEmail(e.target.value)}
-                    placeholder="Enter your credentials"
                     className="block w-full pl-10 pr-3 py-2.5 border rounded-lg text-sm focus:outline-none focus:ring-2"
                     style={{
                       borderColor: colors.outlineVariant,
@@ -138,7 +195,10 @@ export default function HospitalLogin() {
                   Password
                 </label>
                 <div className="relative">
-                  <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none" style={{ color: colors.outline }}>
+                  <div
+                    className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none"
+                    style={{ color: colors.outline }}
+                  >
                     <Lock size={18} />
                   </div>
                   <input
@@ -147,8 +207,9 @@ export default function HospitalLogin() {
                     type="password"
                     required
                     value={password}
+                    autoComplete="off"
                     onChange={(e) => setPassword(e.target.value)}
-                    placeholder="••••••••"
+                    placeholder="Enter your password"
                     className="block w-full pl-10 pr-3 py-2.5 border rounded-lg text-sm focus:outline-none focus:ring-2"
                     style={{
                       borderColor: colors.outlineVariant,
@@ -167,43 +228,23 @@ export default function HospitalLogin() {
                 </div>
               </div>
 
-              {/* Remember me / Forgot password */}
-              <div className="flex items-center justify-between">
-                <div className="flex items-center">
-                  <input
-                    id="remember-me"
-                    name="remember-me"
-                    type="checkbox"
-                    checked={remember}
-                    onChange={(e) => setRemember(e.target.checked)}
-                    className="h-4 w-4 rounded"
-                    style={{ accentColor: colors.primary, borderColor: colors.outlineVariant }}
-                  />
-                  <label
-                    htmlFor="remember-me"
-                    className="ml-2 block text-sm"
-                    style={{ color: colors.onSurfaceVariant }}
-                  >
-                    Remember me
-                  </label>
-                </div>
-                <a
-                  href="#"
-                  className="text-sm font-medium hover:opacity-80 transition-opacity"
-                  style={{ color: colors.primary }}
-                >
-                  Forgot password?
-                </a>
-              </div>
-
               {/* Submit */}
               <div className="pt-2">
                 <button
                   type="submit"
+                  disabled={isLoading}
                   className="w-full flex justify-center py-2.5 px-4 rounded-lg shadow-sm text-sm font-semibold transition-colors duration-150"
-                  style={{ backgroundColor: colors.primary, color: colors.onPrimary }}
-                  onMouseEnter={(e) => (e.currentTarget.style.backgroundColor = colors.primaryContainer)}
-                  onMouseLeave={(e) => (e.currentTarget.style.backgroundColor = colors.primary)}
+                  style={{
+                    backgroundColor: colors.primary,
+                    color: colors.onPrimary,
+                  }}
+                  onMouseEnter={(e) =>
+                    (e.currentTarget.style.backgroundColor =
+                      colors.primaryContainer)
+                  }
+                  onMouseLeave={(e) =>
+                    (e.currentTarget.style.backgroundColor = colors.primary)
+                  }
                 >
                   Login to System
                 </button>
@@ -211,7 +252,10 @@ export default function HospitalLogin() {
             </form>
 
             {/* Footer */}
-            <div className="mt-8 pt-6 border-t text-center" style={{ borderColor: colors.outlineVariant }}>
+            <div
+              className="mt-8 pt-6 border-t text-center"
+              style={{ borderColor: colors.outlineVariant }}
+            >
               <p className="text-sm" style={{ color: colors.outline }}>
                 Unauthorized access is strictly prohibited. Activity is logged.
               </p>

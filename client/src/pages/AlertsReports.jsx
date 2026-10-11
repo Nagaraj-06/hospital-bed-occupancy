@@ -1,27 +1,16 @@
 import React from "react";
 import {
-  LayoutDashboard,
   BedDouble,
-  User,
-  LogIn,
-  ArrowLeftRight,
-  ListChecks,
-  ClipboardList,
-  BarChart3,
   FileText,
   BellRing,
-  Settings,
   Menu,
   Search,
-  MoreVertical,
-  Plus,
   Activity,
   Shuffle,
-  FileSpreadsheet,
-  Play,
 } from "lucide-react";
 import Sidebar from "../components/Sidebar";
 import UserProfileHover from "../components/UserProfileHover";
+import { useGetWardsQuery, useGetAllHistoryQuery } from "../store/api/hospitalApi";
 
 // ---- Design tokens (mirrors the original Tailwind config) ----
 const colors = {
@@ -49,82 +38,74 @@ const colors = {
   outlineVariant: "#BDC8CE",
 };
 
-const navItems = [
-  { icon: LayoutDashboard, label: "Dashboard" },
-  { icon: BedDouble, label: "Wards & Beds" },
-  { icon: User, label: "Patients" },
-  { icon: LogIn, label: "Admissions" },
-  { icon: ArrowLeftRight, label: "Transfers" },
-  { icon: ListChecks, label: "Waiting List" },
-  { icon: ClipboardList, label: "Ward Logs" },
-  { icon: BarChart3, label: "Analytics" },
-  { icon: FileText, label: "Reports", active: true },
-  { icon: BellRing, label: "Alerts" },
-  { icon: Settings, label: "Settings" },
-];
-
-const alerts = [
-  {
-    level: "Critical",
-    time: "10:42 AM",
-    title: "ICU Capacity Reached",
-    body: "Ward 4A (Intensive Care) has reached 100% bed occupancy. 2 incoming transfers pending.",
-    badgeBg: colors.errorContainer,
-    badgeText: colors.onErrorContainer,
-    stripe: colors.error,
-    pulse: true,
-    action: { label: "View Ward", bg: colors.error, text: colors.onError },
-  },
-  {
-    level: "Warning",
-    time: "09:15 AM",
-    title: "Staff Shortage: Night Shift",
-    body: "Maternity Ward 2B is currently understaffed by 2 RNs for the upcoming night shift.",
-    badgeBg: colors.tertiaryFixed,
-    badgeText: colors.onTertiaryFixed,
-    stripe: "#A86516",
-    action: { label: "Manage Roster", outline: true },
-  },
-  {
-    level: "Info",
-    time: "Yesterday, 14:30",
-    title: "Scheduled Maintenance Completed",
-    body: "Routine HVAC maintenance in the South Wing operating theaters has concluded successfully.",
-    badgeBg: colors.secondaryFixed,
-    badgeText: colors.onSecondaryFixed,
-    stripe: colors.primary,
-    action: { label: "Dismiss", ghost: true },
-  },
-];
-
-const reports = [
-  {
-    icon: BedDouble,
-    title: "Bed Occupancy",
-    cadence: "Daily",
-    desc: "Comprehensive overview of current bed utilization across all hospital wings.",
-    lastGen: "Last gen: Today, 06:00",
-    exports: ["pdf", "csv"],
-  },
-  {
-    icon: Activity,
-    title: "Ward Performance",
-    cadence: "Weekly",
-    desc: "Key metrics on discharge times, admission rates, and staffing efficiency per ward.",
-    lastGen: "Last gen: Oct 24",
-    exports: ["pdf"],
-  },
-  {
-    icon: Shuffle,
-    title: "Patient Flow",
-    cadence: "Monthly",
-    desc: "Analysis of patient movement from admission through triage to final ward placement.",
-    lastGen: "Last gen: Oct 01",
-    exports: ["pdf"],
-  },
-];
-
 export default function AlertsReports() {
+  const { data: wardsData, isLoading: wardsLoading, isError: wardsError } = useGetWardsQuery();
+  const { data: historyData, isLoading: historyLoading, isError: historyError } = useGetAllHistoryQuery();
+  const wards = wardsData?.wards || [];
+  const history = historyData?.history || [];
+
+  const alerts = wards.flatMap((ward) => {
+    const total = Number(ward.total_beds) || 0;
+    if (total <= 0) return [];
+    const occupied = Number(ward.occupied_beds) || 0;
+    const available = ward.available_beds == null
+      ? Math.max(0, total - occupied)
+      : Math.max(0, Number(ward.available_beds) || 0);
+    const occupancy = Math.min(100, Math.round((occupied / total) * 100));
+    if (available === 0) return [{
+      level: "Critical",
+      title: "No beds available",
+      body: `${ward.name} has no available beds (${occupied}/${total} occupied).`,
+      badgeBg: colors.errorContainer,
+      badgeText: colors.onErrorContainer,
+      stripe: colors.error,
+    }];
+    if (occupancy >= 85) return [{
+      level: "Warning",
+      title: "Ward nearing capacity",
+      body: `${ward.name} is at ${occupancy}% capacity with ${available} ${available === 1 ? "bed" : "beds"} remaining.`,
+      badgeBg: colors.tertiaryFixed,
+      badgeText: colors.onTertiaryFixed,
+      stripe: "#A86516",
+    }];
+    return [];
+  });
+
+  const recentEvents = history
+    .filter((item) => ["ADMISSION_CREATED", "DOCTOR_APPROVED", "DOCTOR_REJECTED", "ADMITTED", "TRANSFERRED", "DISCHARGED"].includes(item.action))
+    .sort((a, b) => new Date(b.created_at) - new Date(a.created_at))
+    .slice(0, 5)
+    .map((item) => {
+      const actionNames = {
+        ADMISSION_CREATED: "Admission request created",
+        DOCTOR_APPROVED: "Admission request approved",
+        DOCTOR_REJECTED: "Admission request rejected",
+        ADMITTED: "Patient admitted",
+        TRANSFERRED: "Patient transferred",
+        DISCHARGED: "Patient discharged",
+      };
+      const date = new Date(item.created_at);
+      return {
+        level: item.action === "DOCTOR_REJECTED" ? "Attention" : "Activity",
+        title: actionNames[item.action],
+        body: `${item.patient_name || "Patient"} (${item.patient_id || "ID unavailable"})${item.performed_by_name ? ` — recorded by ${item.performed_by_name}` : ""}`,
+        time: Number.isNaN(date.getTime()) ? "Time unavailable" : date.toLocaleString(),
+        badgeBg: item.action === "DOCTOR_REJECTED" ? colors.errorContainer : colors.secondaryFixed,
+        badgeText: item.action === "DOCTOR_REJECTED" ? colors.onErrorContainer : colors.onSecondaryFixed,
+        stripe: item.action === "DOCTOR_REJECTED" ? colors.error : colors.primary,
+      };
+    });
+
+  const totalBeds = wards.reduce((sum, ward) => sum + (Number(ward.total_beds) || 0), 0);
+  const occupiedBeds = wards.reduce((sum, ward) => sum + (Number(ward.occupied_beds) || 0), 0);
+  const today = new Date().toDateString();
+  const todaysEvents = history.filter((item) => new Date(item.created_at).toDateString() === today);
+  const reports = [
+    { icon: BedDouble, title: "Ward Capacity", cadence: "Current", desc: wardsError ? "Ward capacity could not be loaded." : wards.length ? `${occupiedBeds} of ${totalBeds} beds occupied across ${wards.length} wards (${totalBeds ? Math.round(occupiedBeds / totalBeds * 100) : 0}% occupancy).` : "No ward capacity data is available.", lastGen: wardsLoading ? "Loading ward data..." : "Live ward data" },
+    { icon: Activity, title: "Patient Activity", cadence: "Today", desc: historyError ? "Patient activity could not be loaded." : `${todaysEvents.length} patient history events recorded today; ${history.length} total events available.`, lastGen: historyLoading ? "Loading history..." : "Live history data" },
+    { icon: Shuffle, title: "Patient Flow", cadence: "All time", desc: historyError ? "Patient flow data could not be loaded." : `${history.filter((item) => item.action === "ADMITTED").length} admissions, ${history.filter((item) => item.action === "TRANSFERRED").length} transfers, and ${history.filter((item) => item.action === "DISCHARGED").length} discharges recorded.`, lastGen: historyLoading ? "Loading history..." : "Live history data" },
+  ];
+
   return (
     <div className="flex min-h-screen font-sans antialiased" style={{ backgroundColor: colors.surface, color: colors.onSurface }}>
 
@@ -167,26 +148,18 @@ export default function AlertsReports() {
                 <BellRing size={22} style={{ color: colors.primary }} />
                 Alerts Center
               </h2>
-              <div className="flex gap-2">
-                <button
-                  className="px-3 py-1 rounded border text-sm font-semibold transition-colors hover:opacity-80"
-                  style={{ backgroundColor: colors.surfaceContainer, borderColor: colors.outlineVariant }}
-                >
-                  Filter
-                </button>
-                <button
-                  className="px-3 py-1 rounded text-sm font-semibold transition-colors hover:opacity-80"
-                  style={{ color: colors.primary }}
-                >
-                  Clear All
-                </button>
-              </div>
             </div>
 
             <div className="flex flex-col gap-2">
-              {alerts.map((a) => (
+              {wardsError && historyError ? (
+                <p className="rounded-lg border p-5 text-sm" style={{ borderColor: colors.errorContainer, backgroundColor: colors.surfaceContainerLowest, color: colors.error }}>Unable to load live alerts and activity. Please refresh the page and try again.</p>
+              ) : wardsLoading || historyLoading ? (
+                <p className="rounded-lg border p-5 text-sm" style={{ borderColor: colors.outlineVariant, backgroundColor: colors.surfaceContainerLowest, color: colors.onSurfaceVariant }}>Loading live ward and patient activity...</p>
+              ) : alerts.length === 0 && recentEvents.length === 0 ? (
+                <p className="rounded-lg border p-5 text-sm" style={{ borderColor: colors.outlineVariant, backgroundColor: colors.surfaceContainerLowest, color: colors.onSurfaceVariant }}>No capacity alerts or patient events are available yet.</p>
+              ) : [...alerts, ...recentEvents].map((a, index) => (
                 <div
-                  key={a.title}
+                  key={`${a.title}-${index}`}
                   className="rounded-lg p-4 shadow-sm relative overflow-hidden border"
                   style={{ backgroundColor: colors.surfaceContainerLowest, borderColor: a.level === "Critical" ? colors.errorContainer : colors.outlineVariant }}
                 >
@@ -200,30 +173,13 @@ export default function AlertsReports() {
                         {a.pulse && <span className="w-2 h-2 rounded-full animate-pulse" style={{ backgroundColor: colors.error }} />}
                         {a.level}
                       </span>
-                      <span className="font-mono text-sm" style={{ color: colors.onSurfaceVariant }}>
-                        {a.time}
-                      </span>
+                      {a.time && <span className="font-mono text-xs" style={{ color: colors.onSurfaceVariant }}>{a.time}</span>}
                     </div>
-                    <MoreVertical size={18} className="cursor-pointer transition-colors hover:opacity-80" style={{ color: colors.outline }} />
                   </div>
                   <h3 className="text-xl font-semibold mb-1">{a.title}</h3>
                   <p className="text-sm mb-4" style={{ color: colors.onSurfaceVariant }}>
                     {a.body}
                   </p>
-                  <div className="flex justify-end">
-                    <button
-                      className="px-4 py-2 rounded text-sm font-semibold shadow-sm transition-colors hover:opacity-80"
-                      style={
-                        a.action.bg
-                          ? { backgroundColor: a.action.bg, color: a.action.text }
-                          : a.action.outline
-                            ? { border: `1px solid ${colors.outlineVariant}` }
-                            : { color: colors.primary }
-                      }
-                    >
-                      {a.action.label}
-                    </button>
-                  </div>
                 </div>
               ))}
             </div>
@@ -236,14 +192,6 @@ export default function AlertsReports() {
                 <FileText size={22} style={{ color: colors.primary }} />
                 Reports
               </h2>
-              <button
-                className="flex items-center gap-1 px-3 py-1 rounded text-sm font-semibold shadow-sm transition-colors"
-                style={{ backgroundColor: colors.primary, color: colors.onPrimary }}
-                onMouseEnter={(e) => (e.currentTarget.style.backgroundColor = colors.primaryContainer)}
-                onMouseLeave={(e) => (e.currentTarget.style.backgroundColor = colors.primary)}
-              >
-                <Plus size={16} /> New
-              </button>
             </div>
 
             <div className="grid grid-cols-1 gap-4">
@@ -277,35 +225,6 @@ export default function AlertsReports() {
                     <span className="font-mono text-[11px]" style={{ color: colors.onSurfaceVariant }}>
                       {r.lastGen}
                     </span>
-                    <div className="flex gap-1">
-                      {r.exports.includes("pdf") && (
-                        <button
-                          className="w-8 h-8 rounded flex items-center justify-center border transition-colors hover:opacity-80"
-                          style={{ borderColor: colors.outlineVariant }}
-                          title="Export PDF"
-                        >
-                          <FileText size={18} />
-                        </button>
-                      )}
-                      {r.exports.includes("csv") && (
-                        <button
-                          className="w-8 h-8 rounded flex items-center justify-center border transition-colors hover:opacity-80"
-                          style={{ borderColor: colors.outlineVariant }}
-                          title="Export CSV"
-                        >
-                          <FileSpreadsheet size={18} />
-                        </button>
-                      )}
-                      <button
-                        className="w-8 h-8 rounded flex items-center justify-center shadow-sm transition-colors"
-                        style={{ backgroundColor: colors.primary, color: colors.onPrimary }}
-                        onMouseEnter={(e) => (e.currentTarget.style.backgroundColor = colors.primaryContainer)}
-                        onMouseLeave={(e) => (e.currentTarget.style.backgroundColor = colors.primary)}
-                        title="Generate Now"
-                      >
-                        <Play size={18} />
-                      </button>
-                    </div>
                   </div>
                 </div>
               ))}

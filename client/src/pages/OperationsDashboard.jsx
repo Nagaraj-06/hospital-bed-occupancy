@@ -257,7 +257,7 @@ export default function HospitalDashboard() {
   const [refreshError, setRefreshError] = React.useState("");
 
   // ---- Live API data ----
-  const { data: wardsData, isLoading: wardsLoading, refetch: refetchWards } = useGetWardsQuery();
+  const { data: wardsData, isLoading: wardsLoading, isError: wardsError, refetch: refetchWards } = useGetWardsQuery();
   const { data: historyData, isLoading: historyLoading, refetch: refetchHistory } = useGetAllHistoryQuery();
 
   const wards = wardsData?.wards || [];
@@ -269,6 +269,37 @@ export default function HospitalDashboard() {
   const occupiedBeds = wards.reduce((sum, w) => sum + (Number(w.occupied_beds) || 0), 0);
   const availableBeds = totalBeds - occupiedBeds;
   const occupancyRate = totalBeds > 0 ? ((occupiedBeds / totalBeds) * 100).toFixed(1) : "0.0";
+
+  const capacityAlerts = wards
+    .map((ward) => {
+      const total = Number(ward.total_beds) || 0;
+      const occupied = Number(ward.occupied_beds) || 0;
+      const available = ward.available_beds == null
+        ? Math.max(0, total - occupied)
+        : Math.max(0, Number(ward.available_beds) || 0);
+      if (total <= 0) return null;
+
+      const occupancy = Math.min(100, Math.round((occupied / total) * 100));
+      if (available === 0) {
+        return {
+          severity: "critical",
+          title: "No beds available",
+          message: `${ward.name} has no available beds (${occupied}/${total} occupied).`,
+          icon: AlertCircle,
+        };
+      }
+      if (occupancy >= 85) {
+        return {
+          severity: "warning",
+          title: "Ward nearing capacity",
+          message: `${ward.name} is at ${occupancy}% capacity (${occupied}/${total}) with ${available} ${available === 1 ? "bed" : "beds"} remaining.`,
+          icon: Bell,
+        };
+      }
+      return null;
+    })
+    .filter(Boolean)
+    .sort((a, b) => (a.severity === "critical" ? -1 : 1) - (b.severity === "critical" ? -1 : 1));
 
   // ---- Counters from history ----
   const todayStr = new Date().toDateString();
@@ -402,47 +433,45 @@ export default function HospitalDashboard() {
                 </div>
               </div>
 
-              {/* Critical alerts */}
+              {/* Live capacity alerts */}
               <div
                 className="rounded-xl overflow-hidden border-l-4"
-                style={{ backgroundColor: "rgba(186,26,26,0.05)", borderLeftColor: colors.error }}
+                style={{
+                  backgroundColor: capacityAlerts.some((alert) => alert.severity === "critical") ? "rgba(186,26,26,0.05)" : capacityAlerts.length ? "rgba(168,101,22,0.05)" : "rgba(22,101,52,0.05)",
+                  borderLeftColor: capacityAlerts.some((alert) => alert.severity === "critical") ? colors.error : capacityAlerts.length ? colors.tertiaryContainer : "#166534",
+                }}
               >
-                <div className="px-5 py-4 border-b flex justify-between items-center" style={{ borderColor: "rgba(186,26,26,0.2)" }}>
-                  <h3 className="text-lg font-semibold flex items-center gap-2" style={{ color: colors.error }}>
-                    <AlertTriangle size={20} /> Critical Alerts
+                <div className="px-5 py-4 border-b flex justify-between items-center" style={{ borderColor: colors.outlineVariant }}>
+                  <h3 className="text-lg font-semibold flex items-center gap-2" style={{ color: capacityAlerts.some((alert) => alert.severity === "critical") ? colors.error : colors.onSurface }}>
+                    {capacityAlerts.length ? <AlertTriangle size={20} /> : <CheckCircle2 size={20} />} Live Capacity Alerts
                   </h3>
+                  {!wardsLoading && !wardsError && <span className="text-xs" style={{ color: colors.onSurfaceVariant }}>Based on current ward data</span>}
                 </div>
                 <div className="p-4 flex flex-col gap-3">
-                  <div
-                    className="p-3 rounded border flex gap-3 items-start"
-                    style={{ backgroundColor: colors.surfaceContainerLowest, borderColor: "rgba(186,26,26,0.3)" }}
-                  >
-                    <AlertCircle size={20} className="mt-0.5" style={{ color: colors.error }} />
-                    <div>
-                      <p className="text-sm font-bold">Emergency Capacity Alert</p>
-                      <p className="text-sm mt-1" style={{ color: colors.onSurfaceVariant }}>
-                        Only 1 bed available in Emergency. Divert protocol recommended.
-                      </p>
-                      <p className="text-[10px] mt-2 font-semibold" style={{ color: colors.error }}>
-                        10 MINS AGO
-                      </p>
+                  {wardsLoading ? (
+                    <p className="text-sm text-center py-3" style={{ color: colors.onSurfaceVariant }}>Loading ward capacity...</p>
+                  ) : wardsError ? (
+                    <p role="alert" className="text-sm text-center py-3" style={{ color: colors.error }}>Unable to load ward capacity alerts.</p>
+                  ) : wards.length === 0 ? (
+                    <p className="text-sm text-center py-3" style={{ color: colors.onSurfaceVariant }}>No ward capacity data available.</p>
+                  ) : capacityAlerts.length === 0 ? (
+                    <div className="flex items-center justify-center gap-2 py-3 text-sm" style={{ color: "#166534" }}>
+                      <CheckCircle2 size={18} /> All wards have available capacity.
                     </div>
-                  </div>
-                  <div
-                    className="p-3 rounded border flex gap-3 items-start"
-                    style={{ backgroundColor: colors.surfaceContainerLowest, borderColor: "rgba(168,101,22,0.3)" }}
-                  >
-                    <Bell size={20} className="mt-0.5" style={{ color: colors.tertiaryContainer }} />
-                    <div>
-                      <p className="text-sm font-bold">ICU Threshold Reached</p>
-                      <p className="text-sm mt-1" style={{ color: colors.onSurfaceVariant }}>
-                        ICU occupancy has reached 90% (18/20 beds).
-                      </p>
-                      <p className="text-[10px] mt-2 font-semibold" style={{ color: colors.tertiaryContainer }}>
-                        45 MINS AGO
-                      </p>
-                    </div>
-                  </div>
+                  ) : capacityAlerts.map((alert, index) => {
+                    const critical = alert.severity === "critical";
+                    const Icon = alert.icon;
+                    const alertColor = critical ? colors.error : colors.tertiaryContainer;
+                    return (
+                      <div key={`${alert.title}-${index}`} className="p-3 rounded border flex gap-3 items-start" style={{ backgroundColor: colors.surfaceContainerLowest, borderColor: `${alertColor}4D` }}>
+                        <Icon size={20} className="mt-0.5 shrink-0" style={{ color: alertColor }} />
+                        <div>
+                          <p className="text-sm font-bold">{alert.title}</p>
+                          <p className="text-sm mt-1" style={{ color: colors.onSurfaceVariant }}>{alert.message}</p>
+                        </div>
+                      </div>
+                    );
+                  })}
                 </div>
               </div>
             </div>
